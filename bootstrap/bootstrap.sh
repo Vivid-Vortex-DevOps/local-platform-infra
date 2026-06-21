@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CLUSTER_NAME="vvd-local"
 CLUSTER_CONFIG="$REPO_DIR/cluster/kind-single-node.yaml"
+export PATH="$HOME/bin:$PATH"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -51,10 +52,11 @@ install_metallb() {
     kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
     info "Waiting for MetalLB pods..."
     kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=120s 2>/dev/null || true
+    sleep 5
 
-    # Get Kind docker network subnet for MetalLB address pool
+    # Get Kind docker network IPv4 subnet for MetalLB address pool (skip IPv6)
     local KIND_NET_CIDR
-    KIND_NET_CIDR=$(docker network inspect kind -f '{{(index .IPAM.Config 0).Subnet}}')
+    KIND_NET_CIDR=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | tr ' ' '\n' | grep -v ':' | head -1)
     local BASE_IP
     BASE_IP=$(echo "$KIND_NET_CIDR" | sed 's|\.0/.*||')
 
@@ -87,9 +89,9 @@ install_nginx_ingress() {
 
 install_sealed_secrets() {
     info "Installing Sealed Secrets..."
-    helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets 2>/dev/null || true
+    helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
     helm repo update
-    helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
+    helm upgrade --install sealed-secrets bitnami/sealed-secrets \
         --namespace sealed-secrets \
         --wait --timeout 120s
     info "Sealed Secrets installed"
