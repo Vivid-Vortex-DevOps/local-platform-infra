@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: applications
+  namespace: argocd
+spec:
+  description: Application workloads
+  sourceRepos:
+    - https://github.com/Vivid-Vortex-DevOps/go-crud-service.git
+    - https://github.com/Vivid-Vortex-DevOps/springboot-crud-service.git
+  destinations:
+    - namespace: applications-dev
+      server: https://kubernetes.default.svc
+    - namespace: applications-qa
+      server: https://kubernetes.default.svc
+    - namespace: applications-staging
+      server: https://kubernetes.default.svc
+    - namespace: applications-prod
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace

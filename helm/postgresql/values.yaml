@@ -1,0 +1,19 @@
+auth:
+  postgresPassword: postgres
+  database: app_db
+
+primary:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  persistence:
+    size: 2Gi
+
+  initdb:
+    scripts:
+      create-databases.sql: |
+        CREATE DATABASE go_service_db;
+        CREATE DATABASE springboot_service_db;
