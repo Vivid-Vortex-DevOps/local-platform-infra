@@ -23,6 +23,19 @@ grafana:
       memory: 128Mi
     limits:
       memory: 256Mi
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      url: http://loki.monitoring:3100
+      access: proxy
+      isDefault: false
+    - name: Jaeger
+      type: jaeger
+      uid: jaeger
+      url: http://jaeger.monitoring:16686
+      access: proxy
+      isDefault: false
 
 alertmanager:
   enabled: false

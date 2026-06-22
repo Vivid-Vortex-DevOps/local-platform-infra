@@ -8,6 +8,12 @@ loki:
       memory: 128Mi
     limits:
       memory: 256Mi
+  isDefault: false
+
+grafana:
+  sidecar:
+    datasources:
+      enabled: false
 
 promtail:
   enabled: true
