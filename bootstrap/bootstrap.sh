@@ -196,7 +196,7 @@ print_access_info() {
     echo "  Prometheus:  kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090"
     echo "               http://localhost:9090"
     echo ""
-    echo "  Jaeger:      kubectl port-forward svc/jaeger-query -n monitoring 16686:16686"
+    echo "  Jaeger:      kubectl port-forward svc/jaeger -n monitoring 16686:16686"
     echo "               http://localhost:16686"
     echo ""
     echo "  Kiali:       kubectl port-forward svc/kiali -n istio-system 20001:20001"

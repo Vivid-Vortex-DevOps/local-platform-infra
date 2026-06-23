@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export PATH="$HOME/bin:$PATH"
 
 CLUSTER_NAME="vvd-local"
 
