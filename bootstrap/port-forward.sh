@@ -13,7 +13,7 @@ echo "  Grafana:    http://localhost:3000"
 kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090 &>/dev/null &
 echo "  Prometheus: http://localhost:9090"
 
-kubectl port-forward svc/jaeger-query -n monitoring 16686:16686 &>/dev/null &
+kubectl port-forward svc/jaeger -n monitoring 16686:16686 &>/dev/null &
 echo "  Jaeger:     http://localhost:16686"
 
 kubectl port-forward svc/kiali -n istio-system 20001:20001 &>/dev/null &

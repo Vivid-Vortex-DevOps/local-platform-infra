@@ -2,7 +2,11 @@
 set -euo pipefail
 
 # Prerequisites setup for WSL2 Ubuntu
+# Installs tools to ~/bin (no sudo required for tool installation)
 # Run this INSIDE WSL2: ./bootstrap/setup-prerequisites.sh
+
+BIN_DIR="$HOME/bin"
+mkdir -p "$BIN_DIR"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -21,121 +25,118 @@ check_wsl2() {
     info "Running inside WSL2"
 }
 
-enable_systemd() {
-    if [ "$(ps -p 1 -o comm=)" = "systemd" ]; then
-        info "systemd already enabled"
-        return
+setup_path() {
+    if ! grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
+        echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+        info "Added ~/bin to PATH in .bashrc"
     fi
-    warn "systemd is not enabled. Configuring..."
-    sudo tee /etc/wsl.conf > /dev/null <<'WSLCONF'
-[boot]
-systemd=true
-WSLCONF
-    warn "systemd configured. You must restart WSL2:"
-    warn "  From PowerShell: wsl --shutdown"
-    warn "  Then reopen Ubuntu"
-    warn "Re-run this script after restart."
-    exit 0
+    export PATH="$HOME/bin:$PATH"
 }
 
-install_docker_engine() {
+check_docker() {
     if command -v docker &>/dev/null && docker ps &>/dev/null 2>&1; then
-        local docker_ver
-        docker_ver=$(docker --version 2>/dev/null || echo "unknown")
-        info "Docker already installed: $docker_ver"
-        # Check if it's Docker Desktop or native
-        if docker context ls 2>/dev/null | grep -q "desktop-linux"; then
-            warn "Docker Desktop detected. For native Docker Engine:"
-            warn "  1. Close Docker Desktop on Windows"
-            warn "  2. Uninstall Docker packages: sudo apt remove docker-desktop"
-            warn "  3. Re-run this script"
-        fi
+        info "Docker available: $(docker --version 2>/dev/null)"
         return
     fi
 
-    info "Installing Docker Engine..."
-    sudo apt-get update
-    sudo apt-get install -y ca-certificates curl gnupg
+    # Check if Docker Desktop provides docker via WSL integration
+    if [ -e "/mnt/wsl/docker-desktop/docker" ] || command -v docker &>/dev/null; then
+        warn "Docker CLI found but daemon not running."
+        warn "Start Docker Desktop on Windows, or install native Docker Engine."
+        warn "Continuing — Docker will be needed for Kind cluster creation."
+        return
+    fi
 
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    sudo apt-get update
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-    sudo usermod -aG docker "$USER"
-    info "Docker Engine installed. You may need to log out and back in for group changes."
+    warn "Docker not found. Options:"
+    warn "  1. Start Docker Desktop on Windows (WSL2 integration must be enabled)"
+    warn "  2. Install native Docker Engine: see docs/guides/setup.md"
+    warn "Continuing without Docker — it will be needed for Kind cluster."
 }
 
 install_kubectl() {
-    if command -v kubectl &>/dev/null; then
-        info "kubectl already installed: $(kubectl version --client -o yaml 2>/dev/null | grep gitVersion | head -1 || echo 'installed')"
+    if [ -x "$BIN_DIR/kubectl" ]; then
+        info "kubectl already installed: $($BIN_DIR/kubectl version --client --short 2>/dev/null || echo 'installed')"
         return
     fi
     info "Installing kubectl..."
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x kubectl
-    sudo mv kubectl /usr/local/bin/
-    info "kubectl installed"
+    local version
+    version=$(curl -sL https://dl.k8s.io/release/stable.txt 2>/dev/null || echo "v1.32.2")
+    if [ -z "$version" ]; then version="v1.32.2"; fi
+    curl -sLo "$BIN_DIR/kubectl" "https://dl.k8s.io/release/${version}/bin/linux/amd64/kubectl"
+    chmod +x "$BIN_DIR/kubectl"
+    info "kubectl ${version} installed"
 }
 
 install_helm() {
-    if command -v helm &>/dev/null; then
-        info "helm already installed: $(helm version --short 2>/dev/null)"
+    if [ -x "$BIN_DIR/helm" ]; then
+        info "helm already installed: $($BIN_DIR/helm version --short 2>/dev/null)"
         return
     fi
     info "Installing helm..."
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | HELM_INSTALL_DIR="$BIN_DIR" USE_SUDO=false bash
     info "helm installed"
 }
 
 install_kind() {
-    if command -v kind &>/dev/null; then
-        info "kind already installed: $(kind version 2>/dev/null)"
+    if [ -x "$BIN_DIR/kind" ]; then
+        info "kind already installed: $($BIN_DIR/kind version 2>/dev/null)"
         return
     fi
     info "Installing kind..."
-    local KIND_VERSION
-    KIND_VERSION=$(curl -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-    curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
-    chmod +x ./kind
-    sudo mv ./kind /usr/local/bin/kind
-    info "kind installed: ${KIND_VERSION}"
+    local kind_version
+    kind_version=$(curl -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo "v0.27.0")
+    if [ -z "$kind_version" ]; then kind_version="v0.27.0"; fi
+    curl -sLo "$BIN_DIR/kind" "https://kind.sigs.k8s.io/dl/${kind_version}/kind-linux-amd64"
+    chmod +x "$BIN_DIR/kind"
+    info "kind ${kind_version} installed"
 }
 
 install_argocd_cli() {
-    if command -v argocd &>/dev/null; then
-        info "argocd CLI already installed: $(argocd version --client --short 2>/dev/null || echo 'installed')"
+    if [ -x "$BIN_DIR/argocd" ]; then
+        info "argocd CLI already installed"
         return
     fi
     info "Installing argocd CLI..."
-    curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-    chmod +x argocd-linux-amd64
-    sudo mv argocd-linux-amd64 /usr/local/bin/argocd
+    curl -sSL -o "$BIN_DIR/argocd" https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+    chmod +x "$BIN_DIR/argocd"
     info "argocd CLI installed"
 }
 
-install_extras() {
-    info "Installing jq, yq, make..."
-    sudo apt-get install -y jq make curl wget
-    if ! command -v yq &>/dev/null; then
-        local YQ_VERSION
-        YQ_VERSION=$(curl -s https://api.github.com/repos/mikefarah/yq/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-        curl -Lo ./yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-        chmod +x ./yq
-        sudo mv ./yq /usr/local/bin/yq
+install_kubeseal() {
+    if [ -x "$BIN_DIR/kubeseal" ]; then
+        info "kubeseal already installed: $($BIN_DIR/kubeseal --version 2>/dev/null)"
+        return
     fi
-    info "Extra tools installed"
+    info "Installing kubeseal..."
+    local version="0.29.0"
+    curl -sL "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${version}/kubeseal-${version}-linux-amd64.tar.gz" \
+        -o /tmp/kubeseal.tar.gz
+    tar xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
+    mv /tmp/kubeseal "$BIN_DIR/kubeseal"
+    chmod +x "$BIN_DIR/kubeseal"
+    rm -f /tmp/kubeseal.tar.gz
+    info "kubeseal v${version} installed"
+}
+
+install_extras() {
+    info "Checking extra tools (jq, make, git)..."
+    local missing=()
+    for tool in jq make git curl; do
+        command -v "$tool" &>/dev/null || missing+=("$tool")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        info "Installing: ${missing[*]}"
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq "${missing[@]}"
+    fi
+    info "Extra tools ready"
 }
 
 verify_all() {
     echo ""
     info "=== Verification ==="
     echo ""
-    local tools=("docker" "kubectl" "helm" "kind" "argocd" "git" "jq" "yq" "make")
+    local tools=("docker" "kubectl" "helm" "kind" "argocd" "kubeseal" "git" "jq" "make")
     local all_ok=true
     for tool in "${tools[@]}"; do
         if command -v "$tool" &>/dev/null; then
@@ -147,9 +148,10 @@ verify_all() {
     done
     echo ""
     if $all_ok; then
-        info "All prerequisites installed successfully!"
+        info "All prerequisites installed!"
+        info "Tools location: $BIN_DIR"
     else
-        error "Some tools are missing. Re-run this script."
+        warn "Some tools are missing. Check Docker Desktop or re-run."
     fi
 }
 
@@ -161,12 +163,13 @@ main() {
     echo ""
 
     check_wsl2
-    enable_systemd
-    install_docker_engine
+    setup_path
+    check_docker
     install_kubectl
     install_helm
     install_kind
     install_argocd_cli
+    install_kubeseal
     install_extras
     verify_all
 }
