@@ -179,30 +179,32 @@ install_kiali() {
     info "Kiali installed"
 }
 
+apply_ingress() {
+    info "Applying platform Ingress resources..."
+    kubectl apply -f "$REPO_DIR/helm/ingress/platform-ingress.yaml"
+    info "Ingress resources applied"
+}
+
 print_access_info() {
     echo ""
     echo "=========================================="
     echo "  Platform Ready!"
     echo "=========================================="
     echo ""
-    echo "Access services via port-forward:"
+    echo "Access services via Ingress (add to /etc/hosts or C:\\Windows\\System32\\drivers\\etc\\hosts):"
     echo ""
-    echo "  ArgoCD:      kubectl port-forward svc/argocd-server -n argocd 8080:443"
-    echo "               https://localhost:8080"
+    echo "  127.0.0.1 argocd.local grafana.local prometheus.local jaeger.local kiali.local"
     echo ""
-    echo "  Grafana:     kubectl port-forward svc/kube-prometheus-stack-grafana -n monitoring 3000:80"
-    echo "               http://localhost:3000  (admin/prom-operator)"
+    echo "  ArgoCD:      http://argocd.local      (admin / <see below>)"
+    echo "  Grafana:     http://grafana.local      (admin / prom-operator)"
+    echo "  Prometheus:  http://prometheus.local"
+    echo "  Jaeger:      http://jaeger.local"
+    echo "  Kiali:       http://kiali.local"
     echo ""
-    echo "  Prometheus:  kubectl port-forward svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090"
-    echo "               http://localhost:9090"
+    info "ArgoCD admin password:"
+    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d && echo "" || warn "Password not yet available"
     echo ""
-    echo "  Jaeger:      kubectl port-forward svc/jaeger -n monitoring 16686:16686"
-    echo "               http://localhost:16686"
-    echo ""
-    echo "  Kiali:       kubectl port-forward svc/kiali -n istio-system 20001:20001"
-    echo "               http://localhost:20001"
-    echo ""
-    echo "Or run: ./bootstrap/port-forward.sh"
+    echo "Fallback: ./bootstrap/port-forward.sh (if hosts file not configured)"
     echo ""
 }
 
@@ -227,6 +229,7 @@ main() {
     install_jaeger
     install_istio
     install_kiali
+    apply_ingress
     print_access_info
 }
 
