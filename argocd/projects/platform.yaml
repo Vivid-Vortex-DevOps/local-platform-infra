@@ -8,13 +8,7 @@ spec:
   sourceRepos:
     - https://github.com/Vivid-Vortex-DevOps/local-platform-infra.git
   destinations:
-    - namespace: argocd
-      server: https://kubernetes.default.svc
-    - namespace: monitoring
-      server: https://kubernetes.default.svc
-    - namespace: istio-system
-      server: https://kubernetes.default.svc
-    - namespace: ingress-nginx
+    - namespace: "*"
       server: https://kubernetes.default.svc
   clusterResourceWhitelist:
     - group: networking.k8s.io
