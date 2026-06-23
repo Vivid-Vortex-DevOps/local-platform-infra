@@ -41,26 +41,25 @@ create_cluster() {
     info "Cluster created"
 }
 
-apply_namespaces() {
-    info "Creating namespaces..."
-    kubectl apply -f "$REPO_DIR/namespaces/all.yaml"
-    info "Namespaces created"
-}
-
 install_metallb() {
+    if kubectl get namespace metallb-system --context "kind-${CLUSTER_NAME}" &>/dev/null 2>&1; then
+        if kubectl get pods -n metallb-system --context "kind-${CLUSTER_NAME}" --no-headers 2>/dev/null | grep -q Running; then
+            info "MetalLB already installed and running"
+            return
+        fi
+    fi
     info "Installing MetalLB..."
-    kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
+    kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml --context "kind-${CLUSTER_NAME}"
     info "Waiting for MetalLB pods..."
-    kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=120s 2>/dev/null || true
+    kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=120s --context "kind-${CLUSTER_NAME}" 2>/dev/null || true
     sleep 5
 
-    # Get Kind docker network IPv4 subnet for MetalLB address pool (skip IPv6)
     local KIND_NET_CIDR
     KIND_NET_CIDR=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | tr ' ' '\n' | grep -v ':' | head -1)
     local BASE_IP
     BASE_IP=$(echo "$KIND_NET_CIDR" | sed 's|\.0/.*||')
 
-    kubectl apply -f - <<EOF
+    kubectl apply --context "kind-${CLUSTER_NAME}" -f - <<EOF
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -76,113 +75,60 @@ metadata:
   name: default
   namespace: metallb-system
 EOF
-    info "MetalLB installed"
-}
-
-install_nginx_ingress() {
-    info "Installing NGINX Ingress Controller..."
-    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-    info "Waiting for Ingress Controller..."
-    kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=120s 2>/dev/null || true
-    info "NGINX Ingress Controller installed"
-}
-
-install_sealed_secrets() {
-    info "Installing Sealed Secrets..."
-    helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
-    helm repo update
-    helm upgrade --install sealed-secrets bitnami/sealed-secrets \
-        --namespace sealed-secrets \
-        --wait --timeout 120s
-    info "Sealed Secrets installed"
+    info "MetalLB installed (pool: ${BASE_IP}.200-250)"
 }
 
 install_argocd() {
     info "Installing ArgoCD..."
     helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
-    helm repo update
+    helm repo update argo
     helm upgrade --install argocd argo/argo-cd \
-        --namespace argocd \
+        --namespace argocd --create-namespace \
         --values "$REPO_DIR/helm/argocd/values.yaml" \
+        --kube-context "kind-${CLUSTER_NAME}" \
         --wait --timeout 300s
     info "ArgoCD installed"
-    info "ArgoCD initial admin password:"
-    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d && echo "" || warn "Password not yet available"
 }
 
-install_postgresql() {
-    info "Installing PostgreSQL..."
-    helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
-    helm repo update
-    helm upgrade --install postgresql bitnami/postgresql \
-        --namespace applications-dev \
-        --values "$REPO_DIR/helm/postgresql/values.yaml" \
-        --wait --timeout 180s
-    info "PostgreSQL installed"
+apply_projects() {
+    info "Applying ArgoCD projects..."
+    kubectl apply -f "$REPO_DIR/argocd/projects/" --context "kind-${CLUSTER_NAME}"
+    info "Projects applied (platform, applications)"
 }
 
-install_prometheus_stack() {
-    info "Installing Prometheus + Grafana (kube-prometheus-stack)..."
-    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
-    helm repo update
-    helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-        --namespace monitoring \
-        --values "$REPO_DIR/helm/prometheus/values.yaml" \
-        --wait --timeout 300s
-    info "Prometheus + Grafana installed"
+apply_root_app() {
+    info "Applying root App of Apps..."
+    kubectl apply -f "$REPO_DIR/argocd/root.yaml" --context "kind-${CLUSTER_NAME}"
+    info "Root application applied — ArgoCD will now manage all platform components"
 }
 
-install_loki() {
-    info "Installing Loki..."
-    helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
-    helm repo update
-    helm upgrade --install loki grafana/loki-stack \
-        --namespace monitoring \
-        --values "$REPO_DIR/helm/loki/values.yaml" \
-        --wait --timeout 180s
-    info "Loki installed"
-}
+wait_for_platform() {
+    info "Waiting for ArgoCD to sync all applications..."
+    local max_wait=600
+    local elapsed=0
+    local check_interval=15
 
-install_jaeger() {
-    info "Installing Jaeger..."
-    helm repo add jaegertracing https://jaegertracing.github.io/helm-charts 2>/dev/null || true
-    helm repo update
-    helm upgrade --install jaeger jaegertracing/jaeger \
-        --namespace monitoring \
-        --values "$REPO_DIR/helm/jaeger/values.yaml" \
-        --wait --timeout 180s
-    info "Jaeger installed"
-}
+    while [ $elapsed -lt $max_wait ]; do
+        local total
+        total=$(kubectl get applications -n argocd --context "kind-${CLUSTER_NAME}" --no-headers 2>/dev/null | wc -l)
+        local synced
+        synced=$(kubectl get applications -n argocd --context "kind-${CLUSTER_NAME}" --no-headers 2>/dev/null | grep -c "Synced" || true)
+        local healthy
+        healthy=$(kubectl get applications -n argocd --context "kind-${CLUSTER_NAME}" --no-headers 2>/dev/null | grep -c "Healthy" || true)
 
-install_istio() {
-    info "Installing Istio..."
-    helm repo add istio https://istio-release.storage.googleapis.com/charts 2>/dev/null || true
-    helm repo update
-    helm upgrade --install istio-base istio/base \
-        --namespace istio-system \
-        --wait --timeout 120s
-    helm upgrade --install istiod istio/istiod \
-        --namespace istio-system \
-        --values "$REPO_DIR/helm/istio/values.yaml" \
-        --wait --timeout 300s
-    info "Istio installed"
-}
+        echo -ne "\r  Apps: ${total} total, ${synced} synced, ${healthy} healthy (${elapsed}s)..."
 
-install_kiali() {
-    info "Installing Kiali..."
-    helm repo add kiali https://kiali.org/helm-charts 2>/dev/null || true
-    helm repo update
-    helm upgrade --install kiali kiali/kiali-server \
-        --namespace istio-system \
-        --values "$REPO_DIR/helm/kiali/values.yaml" \
-        --wait --timeout 180s
-    info "Kiali installed"
-}
+        if [ "$total" -gt 5 ] && [ "$synced" -eq "$total" ] && [ "$healthy" -eq "$total" ]; then
+            echo ""
+            info "All ${total} applications are Synced and Healthy!"
+            return
+        fi
 
-apply_ingress() {
-    info "Applying platform Ingress resources..."
-    kubectl apply -f "$REPO_DIR/helm/ingress/platform-ingress.yaml"
-    info "Ingress resources applied"
+        sleep "$check_interval"
+        elapsed=$((elapsed + check_interval))
+    done
+    echo ""
+    warn "Not all applications healthy within ${max_wait}s — check ArgoCD dashboard"
 }
 
 print_access_info() {
@@ -190,6 +136,10 @@ print_access_info() {
     echo "=========================================="
     echo "  Platform Ready!"
     echo "=========================================="
+    echo ""
+    echo "ArgoCD manages all platform components via App of Apps pattern."
+    echo ""
+    kubectl get applications -n argocd --context "kind-${CLUSTER_NAME}" 2>/dev/null
     echo ""
     echo "Access services via Ingress (add to /etc/hosts or C:\\Windows\\System32\\drivers\\etc\\hosts):"
     echo ""
@@ -202,7 +152,7 @@ print_access_info() {
     echo "  Kiali:       http://kiali.local"
     echo ""
     info "ArgoCD admin password:"
-    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d && echo "" || warn "Password not yet available"
+    kubectl -n argocd get secret argocd-initial-admin-secret --context "kind-${CLUSTER_NAME}" -o jsonpath="{.data.password}" 2>/dev/null | base64 -d && echo "" || warn "Password not yet available"
     echo ""
     echo "Fallback: ./bootstrap/port-forward.sh (if hosts file not configured)"
     echo ""
@@ -215,21 +165,18 @@ main() {
     echo "  Cluster: ${CLUSTER_NAME}"
     echo "=========================================="
     echo ""
+    echo "  Strategy: ArgoCD App of Apps"
+    echo "  Bootstrap installs: Kind cluster + MetalLB + ArgoCD"
+    echo "  ArgoCD manages: Everything else (12+ components)"
+    echo ""
 
     check_prerequisites
     create_cluster
-    apply_namespaces
     install_metallb
-    install_nginx_ingress
-    install_sealed_secrets
     install_argocd
-    install_postgresql
-    install_prometheus_stack
-    install_loki
-    install_jaeger
-    install_istio
-    install_kiali
-    apply_ingress
+    apply_projects
+    apply_root_app
+    wait_for_platform
     print_access_info
 }
 

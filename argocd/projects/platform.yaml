@@ -4,12 +4,23 @@ metadata:
   name: platform
   namespace: argocd
 spec:
-  description: Platform infrastructure components
+  description: Platform infrastructure components managed via App of Apps
   sourceRepos:
     - https://github.com/Vivid-Vortex-DevOps/local-platform-infra.git
+    - https://bitnami-labs.github.io/sealed-secrets
+    - https://charts.bitnami.com/bitnami
+    - https://prometheus-community.github.io/helm-charts
+    - https://grafana.github.io/helm-charts
+    - https://jaegertracing.github.io/helm-charts
+    - https://istio-release.storage.googleapis.com/charts
+    - https://kiali.org/helm-charts
+    - https://kubernetes.github.io/ingress-nginx
   destinations:
     - namespace: "*"
       server: https://kubernetes.default.svc
   clusterResourceWhitelist:
-    - group: networking.k8s.io
-      kind: Ingress
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

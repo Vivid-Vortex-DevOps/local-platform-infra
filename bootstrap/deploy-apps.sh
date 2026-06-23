@@ -53,52 +53,8 @@ build_and_load() {
     kind load docker-image "${service}:latest" --name "$CLUSTER_NAME"
 }
 
-create_secrets() {
-    local ns="applications-dev"
-
-    info "Creating database secrets..."
-
-    # Go service secret
-    if ! kubectl get secret go-crud-db-credentials -n "$ns" --context "kind-${CLUSTER_NAME}" &>/dev/null; then
-        kubectl create secret generic go-crud-db-credentials \
-            --namespace "$ns" \
-            --from-literal=database-url="postgres://postgres:postgres@postgresql.${ns}.svc.cluster.local:5432/go_service_db?sslmode=disable" \
-            --context "kind-${CLUSTER_NAME}"
-        info "Created go-crud-db-credentials"
-    else
-        info "go-crud-db-credentials already exists"
-    fi
-
-    # Spring Boot service secret
-    if ! kubectl get secret springboot-crud-db-credentials -n "$ns" --context "kind-${CLUSTER_NAME}" &>/dev/null; then
-        kubectl create secret generic springboot-crud-db-credentials \
-            --namespace "$ns" \
-            --from-literal=database-url="jdbc:postgresql://postgresql.${ns}.svc.cluster.local:5432/springboot_service_db" \
-            --from-literal=username="postgres" \
-            --from-literal=password="postgres" \
-            --context "kind-${CLUSTER_NAME}"
-        info "Created springboot-crud-db-credentials"
-    else
-        info "springboot-crud-db-credentials already exists"
-    fi
-}
-
-apply_argocd_resources() {
-    info "Applying ArgoCD AppProject and Applications..."
-    kubectl apply -f "$REPO_DIR/argocd/projects/applications.yaml" --context "kind-${CLUSTER_NAME}"
-    kubectl apply -f "$REPO_DIR/argocd/dev/go-crud-service.yaml" --context "kind-${CLUSTER_NAME}"
-    kubectl apply -f "$REPO_DIR/argocd/dev/springboot-crud-service.yaml" --context "kind-${CLUSTER_NAME}"
-
-    if [ -f "$REPO_DIR/argocd/dev/network-policies.yaml" ]; then
-        kubectl apply -f "$REPO_DIR/argocd/dev/network-policies.yaml" --context "kind-${CLUSTER_NAME}"
-        info "NetworkPolicies applied"
-    fi
-
-    info "ArgoCD resources applied"
-}
-
 wait_for_apps() {
-    info "Waiting for applications to become healthy..."
+    info "Waiting for ArgoCD to deploy applications..."
     local max_wait=180
     local elapsed=0
     while [ $elapsed -lt $max_wait ]; do
@@ -137,26 +93,19 @@ main() {
     echo "  Deploy Applications"
     echo "=========================================="
     echo ""
+    echo "  Builds images and loads into Kind."
+    echo "  ArgoCD manages the actual deployment."
+    echo ""
 
     check_cluster
 
-    # Clone/pull application repos
     clone_or_pull "go-crud-service" "local_main"
     clone_or_pull "springboot-crud-service" "local_main"
 
-    # Build and load images
     build_and_load "go-crud-service"
     build_and_load "springboot-crud-service"
 
-    # Create secrets
-    create_secrets
-
-    # Apply ArgoCD resources
-    apply_argocd_resources
-
-    # Wait for healthy
     wait_for_apps
-
     print_status
 }
 

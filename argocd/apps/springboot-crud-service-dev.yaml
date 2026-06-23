@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: springboot-crud-service-dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: applications
+  source:
+    repoURL: https://github.com/Vivid-Vortex-DevOps/springboot-crud-service.git
+    targetRevision: local_main
+    path: deployment/helm
+    helm:
+      valueFiles:
+        - ../values/dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: applications-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
